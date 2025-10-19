@@ -1,5 +1,7 @@
 use libm::erfc;
 use nanorand::*;
+
+#[cfg(feature = "num-complex")]
 use num_complex::*;
 
 // Ziggurat algorithm
@@ -19,26 +21,23 @@ pub struct Ziggurat {
 impl Ziggurat {
     pub fn new(c: u32) -> Self {
         // Our one sided pdf, f(x), defined on [0..infinity)
-        let f = |x: f64| { (-0.5*x.powi(2)).exp() };
+        let f = |x: f64| (-0.5 * x.powi(2)).exp();
         // integral of f(u) from u=x..infinity
-        let integral = |x: f64| {
-            std::f64::consts::FRAC_PI_2.sqrt() * erfc(x / 2_f64.sqrt())
-        };
-        
+        let integral = |x: f64| std::f64::consts::FRAC_PI_2.sqrt() * erfc(x / 2_f64.sqrt());
+
         let (_xc, r) = Self::find_r(c);
         let v = r * f(r) + integral(r);
         let xs = Self::find_xs(c);
         Self { c, r, v, xs, f }
     }
     pub fn find_r(c: u32) -> (f64, f64) {
-        
-        let f = |x: f64| { (-0.5*x.powi(2)).exp() };
+        let f = |x: f64| (-0.5 * x.powi(2)).exp();
 
         // The inverse pdf, f^-1(x), defined on (0, 1].
-        let finv = |x: f64| { (-2.0 * x.ln()).sqrt() };
+        let finv = |x: f64| (-2.0 * x.ln()).sqrt();
 
         // integral of f(u) from u=x..infinity
-        let numeric_integral = |x: f64| {
+        let _numeric_integral = |x: f64| {
             let step = 1e-4;
             let mut output = 0.0;
             let mut left = x;
@@ -54,9 +53,7 @@ impl Ziggurat {
         };
 
         // integral of f(u) from u=x..infinity
-        let integral = |x: f64| {
-            std::f64::consts::FRAC_PI_2.sqrt() * erfc(x / 2_f64.sqrt())
-        };
+        let integral = |x: f64| std::f64::consts::FRAC_PI_2.sqrt() * erfc(x / 2_f64.sqrt());
 
         let lower_bound = integral(0.0);
         let calculate_xc = |r: f64| {
@@ -76,12 +73,11 @@ impl Ziggurat {
                 }
             };
             let mut xi = r;
-            for _i in 2..c+1 {
+            for _i in 2..c + 1 {
                 // i represents which x index, so we initialize xi = r for i = 1, and then on the first iteration of this
                 // loop we are calculating xi for i = 2. We want xi = 0.0 for i = C.
                 let tmp = xnext(xi);
-                if tmp.is_some() {
-                    let value = tmp.unwrap();
+                if let Some(value) = tmp {
                     if value > xi {
                         panic!("xi should be monotonic decreasing");
                     }
@@ -132,7 +128,7 @@ impl Ziggurat {
                     best_xc = xc;
                     best_r = r;
                 }
-                
+
                 // Update our gradient parameters
                 let dr = r - r0;
                 let dxc = xc - xc0;
@@ -163,15 +159,13 @@ impl Ziggurat {
 
     pub fn find_xs(c: u32) -> Vec<f64> {
         // Our one sided pdf, f(x), defined on [0..infinity)
-        let f = |x: f64| { (-0.5*x.powi(2)).exp() };
+        let f = |x: f64| (-0.5 * x.powi(2)).exp();
 
         // The inverse pdf, f^-1(x), defined on (0, 1].
-        let finv = |x: f64| { (-2.0 * x.ln()).sqrt() };
+        let finv = |x: f64| (-2.0 * x.ln()).sqrt();
 
         // integral of f(u) from u=x..infinity
-        let integral = |x: f64| {
-            std::f64::consts::FRAC_PI_2.sqrt() * erfc(x / 2_f64.sqrt())
-        };
+        let integral = |x: f64| std::f64::consts::FRAC_PI_2.sqrt() * erfc(x / 2_f64.sqrt());
 
         let (_xc, r) = Self::find_r(c);
         let vr = r * f(r) + integral(r);
@@ -203,14 +197,18 @@ pub struct Awgn {
 
 impl Awgn {
     pub fn new(seed: u64, c: u32) -> Self {
-        Self { rng: WyRand::new_seed(seed), ziggurat: Ziggurat::new(c) }
+        Self {
+            rng: WyRand::new_seed(seed),
+            ziggurat: Ziggurat::new(c),
+        }
     }
 
     #[inline]
     pub fn rand_f64(&mut self) -> f64 {
-        f64::from_bits((self.rng.generate::<u64>() & 0x000f_ffff_ffff_ffff) | 0x3ff0_0000_0000_0000) - 1.0
+        f64::from_bits((self.rng.generate::<u64>() & 0x000f_ffff_ffff_ffff) | 0x3ff0_0000_0000_0000)
+            - 1.0
     }
-    
+
     #[inline]
     pub fn rand_f32(&mut self) -> f32 {
         f32::from_bits(self.rng.generate::<u32>() & 0x007f_ffff | 0x3f80_0000) - 1.0
@@ -240,19 +238,21 @@ impl Awgn {
     z1 = sqrt { -2 ln x1 } * cos { 2 * pi * x2 }
     z2 = sqrt { -2 ln x1 } * sin { 2 * pi * x2 }
     */
-    pub fn randn_f32(&mut self) -> Complex<f32> {
+    #[cfg(feature = "num-complex")]
+    pub fn crandn_box_muller_f32(&mut self) -> Complex<f32> {
         let mag = (-2.0 * self.rand_f32().ln()).sqrt();
-        let rad = 2.0*std::f32::consts::PI*self.rand_f32();
-        Complex::new(mag*(rad.cos()), mag*(rad.sin()))
+        let rad = 2.0 * std::f32::consts::PI * self.rand_f32();
+        Complex::new(mag * (rad.cos()), mag * (rad.sin()))
     }
 
-    pub fn randn_f64(&mut self) -> Complex<f64> {
+    #[cfg(feature = "num-complex")]
+    pub fn crandn_box_muller_f64(&mut self) -> Complex<f64> {
         let mag = (-2.0 * self.rand_f64().ln()).sqrt();
-        let rad = 2.0*std::f64::consts::PI*self.rand_f64();
-        Complex::new(mag*(rad.cos()), mag*(rad.sin()))
+        let rad = 2.0 * std::f64::consts::PI * self.rand_f64();
+        Complex::new(mag * (rad.cos()), mag * (rad.sin()))
     }
 
-    pub fn ziggurat(&mut self) -> f64 {
+    pub fn randn_f64(&mut self) -> f64 {
         let c = self.ziggurat.c;
 
         // Draw samples until one is accepted. Should be the first one most of the time.
@@ -267,7 +267,7 @@ impl Awgn {
                 u0 * self.ziggurat.v / (self.ziggurat.f)(self.ziggurat.xs[0])
             } else {
                 // z = U0 * xi
-                u0 * self.ziggurat.xs[idx-1]
+                u0 * self.ziggurat.xs[idx - 1]
             };
 
             // If z < x_{i+1}, accept z
@@ -293,7 +293,7 @@ impl Awgn {
             } else {
                 // If U1 * [ f(xi) - f(x_{i+1}) ] < f(z) - f(x_{i+1}), accept z
                 let u1 = self.rand_f64();
-                let fx = (self.ziggurat.f)(self.ziggurat.xs[idx-1]);
+                let fx = (self.ziggurat.f)(self.ziggurat.xs[idx - 1]);
                 let fx1 = (self.ziggurat.f)(self.ziggurat.xs[idx]);
                 let left = u1 * (fx - fx1);
                 let right = (self.ziggurat.f)(z) - fx1;
@@ -304,17 +304,32 @@ impl Awgn {
         }
     }
 
-    pub fn complex_ziggurat(&mut self) -> Complex<f64> {
-        Complex::new( self.ziggurat(), self.ziggurat() )
+    #[cfg(feature = "num-complex")]
+    pub fn crandn_f64(&mut self) -> Complex<f64> {
+        Complex::new(self.randn_f64(), self.randn_f64())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
-    use std::io::Write;
     use super::*;
+    use std::time::Instant;
 
+    #[test]
+    fn randn_timing() {
+        let n = 1024 * 1024 * 64;
+        //let mut data = vec![0.0_f32; n];
+        let mut awgn = Awgn::new(0, 512);
+        let t0 = Instant::now();
+        let data: Vec<f64> = (0..n).map(|_| awgn.randn_f64()).collect();
+        let dt = t0.elapsed().as_secs_f64();
+        println!("data[0]: {}", data[0]);
+        println!("dt     : {}", dt);
+        println!("MSPS   : {}", n as f64 / (1e6 * dt));
+        assert_eq!(data.len(), n);
+    }
+
+    #[cfg(feature = "num-complex")]
     #[test]
     fn box_muller_timing() {
         let n = 1024 * 1024 * 64;
@@ -322,7 +337,7 @@ mod tests {
         let mut awgn = Awgn::new(0, 512);
         let t0 = Instant::now();
         //let data: Vec<_> = (0..n).map(|_| awgn.rand_f32()).collect();
-        let data: Vec<_> = (0..n).map(|_| awgn.randn_f64()).collect();
+        let data: Vec<_> = (0..n).map(|_| awgn.crandn_box_muller_f64()).collect();
         //let data: Vec<_> = awgn.rand_vec_f32(n);
         //awgn.fill_f32(&mut data);
         let dt = t0.elapsed().as_secs_f64();
@@ -348,6 +363,7 @@ mod tests {
         assert_eq!(xs.len(), c as usize);
     }
 
+    #[cfg(feature = "num-complex")]
     #[test]
     fn ziggurat_timing() {
         let n = 1024 * 1024 * 64;
@@ -355,12 +371,10 @@ mod tests {
         let mut awgn = Awgn::new(0, 512);
         let t0 = Instant::now();
         //let data: Vec<_> = (0..n).map(|_| awgn.rand_f32()).collect();
-        let data: Vec<_> = (0..n).map(|_| awgn.complex_ziggurat()).collect();
+        let data: Vec<_> = (0..n).map(|_| awgn.crandn_f64()).collect();
         //let data: Vec<_> = awgn.rand_vec_f32(n);
         //awgn.fill_f32(&mut data);
         let dt = t0.elapsed().as_secs_f64();
-        //let mut file = std::fs::File::create("ztest.dat").expect("failed to create file");
-        //file.write(bytemuck::cast_slice(&data)).expect("failed to write");
         println!("data[0]: {}", data[0]);
         println!("dt     : {}", dt);
         println!("MSPS   : {}", n as f64 / (1e6 * dt));
