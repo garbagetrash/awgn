@@ -7,11 +7,10 @@
 //! than uniform and standard normal f32/f64 samples.
 
 use libm::erfc;
-use nanorand::*;
+use nanorand::{Rng, WyRand};
 
 #[cfg(feature = "num-complex")]
-use num_complex::*;
-
+use num_complex::{Complex32, Complex64, c32, c64};
 
 #[derive(Clone, Debug)]
 struct Ziggurat {
@@ -242,14 +241,14 @@ impl Generator {
     }
 
     /// Fill up buffer with uniform [0, 1).
-    pub fn fill_f32(&mut self, buffer: &mut [f32]) {
+    pub fn rand_fill_f32(&mut self, buffer: &mut [f32]) {
         for x in buffer {
             *x = self.rand_f32();
         }
     }
 
     /// Fill up buffer with uniform [0, 1).
-    pub fn fill_f64(&mut self, buffer: &mut [f64]) {
+    pub fn rand_fill_f64(&mut self, buffer: &mut [f64]) {
         for x in buffer {
             *x = self.rand_f64();
         }
@@ -261,18 +260,18 @@ impl Generator {
     */
     #[cfg(feature = "num-complex")]
     /// Uses Box-Muller Transform to generate random complex gaussian distributed samples.
-    pub fn crandn_box_muller_f32(&mut self) -> Complex<f32> {
+    pub fn crandn_box_muller_f32(&mut self) -> Complex32 {
         let mag = (-2.0 * self.rand_f32().ln()).sqrt();
         let rad = 2.0 * std::f32::consts::PI * self.rand_f32();
-        Complex::new(mag * (rad.cos()), mag * (rad.sin()))
+        c32(mag * (rad.cos()), mag * (rad.sin()))
     }
 
     #[cfg(feature = "num-complex")]
     /// Uses Box-Muller Transform to generate random complex gaussian distributed samples.
-    pub fn crandn_box_muller_f64(&mut self) -> Complex<f64> {
+    pub fn crandn_box_muller_f64(&mut self) -> Complex64 {
         let mag = (-2.0 * self.rand_f64().ln()).sqrt();
         let rad = 2.0 * std::f64::consts::PI * self.rand_f64();
-        Complex::new(mag * (rad.cos()), mag * (rad.sin()))
+        c64(mag * (rad.cos()), mag * (rad.sin()))
     }
 
     /// Uses Ziggurat Algorithm to generate standard normal distributed samples, X ~ N(0, 1).
@@ -328,13 +327,39 @@ impl Generator {
         }
     }
 
+    /// Generate vector of standard normal X ~ N(0, 1).
+    pub fn randn_vec_f64(&mut self, n: usize) -> Vec<f64> {
+        (0..n).map(|_| self.randn_f64()).collect()
+    }
+
+    /// Fill up buffer with standard normal X ~ N(0, 1).
+    pub fn randn_fill_f64(&mut self, buffer: &mut [f64]) {
+        for x in buffer {
+            *x = self.randn_f64();
+        }
+    }
+
     #[cfg(feature = "num-complex")]
     /// Generate X ~ CN(0, 2) distributed samples using the Ziggurat Algorithm.
     ///
     /// The Ziggurat Algorithm to generate complex gaussian distributed samples is around 2 times
     /// faster than the Box-Muller transform.
-    pub fn crandn_f64(&mut self) -> Complex<f64> {
-        Complex::new(self.randn_f64(), self.randn_f64())
+    pub fn crandn_f64(&mut self) -> Complex64 {
+        c64(self.randn_f64(), self.randn_f64())
+    }
+
+    #[cfg(feature = "num-complex")]
+    /// Generate vector of complex gaussian X ~ CN(0, 2).
+    pub fn crandn_vec_f64(&mut self, n: usize) -> Vec<Complex64> {
+        (0..n).map(|_| self.crandn_f64()).collect()
+    }
+
+    #[cfg(feature = "num-complex")]
+    /// Fill up buffer with complex gaussian X ~ CN(0, 2).
+    pub fn crandn_fill_f64(&mut self, buffer: &mut [Complex64]) {
+        for x in buffer {
+            *x = self.crandn_f64();
+        }
     }
 }
 
