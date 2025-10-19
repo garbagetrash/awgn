@@ -1,16 +1,20 @@
+//! Simple module to generate samples efficiently for a couple common types of distributions,
+//! uniform and standard normal. Complex gaussian support is feature gated.
+//!
+//! The whole point of this crate is to be lighter weight than the otherwise brilliant collection
+//! of `rand` crates. Those crates can do anything under the sun, which is much more than is really
+//! needed the vast majority of the time. This crate is handy when you don't need anything other
+//! than uniform and standard normal f32/f64 samples.
+
 use libm::erfc;
 use nanorand::*;
 
 #[cfg(feature = "num-complex")]
 use num_complex::*;
 
-// Ziggurat algorithm
-// use C = 256 blocks
-// Each section has area V, 1.0 / 256
-// Each rectangle has area V except bottom R0, which is V - tail
 
 #[derive(Clone, Debug)]
-pub struct Ziggurat {
+struct Ziggurat {
     c: u32,
     r: f64,
     v: f64,
@@ -19,7 +23,7 @@ pub struct Ziggurat {
 }
 
 impl Ziggurat {
-    pub fn new(c: u32) -> Self {
+    fn new(c: u32) -> Self {
         // Our one sided pdf, f(x), defined on [0..infinity)
         let f = |x: f64| (-0.5 * x.powi(2)).exp();
         // integral of f(u) from u=x..infinity
@@ -30,7 +34,8 @@ impl Ziggurat {
         let xs = Self::find_xs(c);
         Self { c, r, v, xs, f }
     }
-    pub fn find_r(c: u32) -> (f64, f64) {
+
+    fn find_r(c: u32) -> (f64, f64) {
         let f = |x: f64| (-0.5 * x.powi(2)).exp();
 
         // The inverse pdf, f^-1(x), defined on (0, 1].
@@ -157,7 +162,7 @@ impl Ziggurat {
         (best_xc, best_r)
     }
 
-    pub fn find_xs(c: u32) -> Vec<f64> {
+    fn find_xs(c: u32) -> Vec<f64> {
         // Our one sided pdf, f(x), defined on [0..infinity)
         let f = |x: f64| (-0.5 * x.powi(2)).exp();
 
@@ -190,12 +195,22 @@ impl Ziggurat {
     }
 }
 
-pub struct Awgn {
+pub struct Generator {
     rng: WyRand,
     ziggurat: Ziggurat,
 }
 
-impl Awgn {
+impl Default for Generator {
+    fn default() -> Self {
+        let rng = WyRand::new_seed(0);
+        let ziggurat = Ziggurat::new(128);
+        Self { rng, ziggurat }
+    }
+}
+
+impl Generator {
+    /// Create a new rng object giving a hardcoded seed to initialize the rng, and a number of
+    /// blocks for the ziggurat algorithm to use. When in doubt, 128 is fine.
     pub fn new(seed: u64, c: u32) -> Self {
         Self {
             rng: WyRand::new_seed(seed),
@@ -204,30 +219,36 @@ impl Awgn {
     }
 
     #[inline]
+    /// Generate uniform [0, 1) efficiently using nanorand.
     pub fn rand_f64(&mut self) -> f64 {
         f64::from_bits((self.rng.generate::<u64>() & 0x000f_ffff_ffff_ffff) | 0x3ff0_0000_0000_0000)
             - 1.0
     }
 
     #[inline]
+    /// Generate uniform [0, 1) efficiently using nanorand.
     pub fn rand_f32(&mut self) -> f32 {
         f32::from_bits(self.rng.generate::<u32>() & 0x007f_ffff | 0x3f80_0000) - 1.0
     }
 
+    /// Generate vector of uniform [0, 1).
     pub fn rand_vec_f64(&mut self, n: usize) -> Vec<f64> {
         (0..n).map(|_| self.rand_f64()).collect()
     }
 
+    /// Generate vector of uniform [0, 1).
     pub fn rand_vec_f32(&mut self, n: usize) -> Vec<f32> {
         (0..n).map(|_| self.rand_f32()).collect()
     }
 
+    /// Fill up buffer with uniform [0, 1).
     pub fn fill_f32(&mut self, buffer: &mut [f32]) {
         for x in buffer {
             *x = self.rand_f32();
         }
     }
 
+    /// Fill up buffer with uniform [0, 1).
     pub fn fill_f64(&mut self, buffer: &mut [f64]) {
         for x in buffer {
             *x = self.rand_f64();
@@ -239,6 +260,7 @@ impl Awgn {
     z2 = sqrt { -2 ln x1 } * sin { 2 * pi * x2 }
     */
     #[cfg(feature = "num-complex")]
+    /// Uses Box-Muller Transform to generate random complex gaussian distributed samples.
     pub fn crandn_box_muller_f32(&mut self) -> Complex<f32> {
         let mag = (-2.0 * self.rand_f32().ln()).sqrt();
         let rad = 2.0 * std::f32::consts::PI * self.rand_f32();
@@ -246,12 +268,14 @@ impl Awgn {
     }
 
     #[cfg(feature = "num-complex")]
+    /// Uses Box-Muller Transform to generate random complex gaussian distributed samples.
     pub fn crandn_box_muller_f64(&mut self) -> Complex<f64> {
         let mag = (-2.0 * self.rand_f64().ln()).sqrt();
         let rad = 2.0 * std::f64::consts::PI * self.rand_f64();
         Complex::new(mag * (rad.cos()), mag * (rad.sin()))
     }
 
+    /// Uses Ziggurat Algorithm to generate standard normal distributed samples, X ~ N(0, 1).
     pub fn randn_f64(&mut self) -> f64 {
         let c = self.ziggurat.c;
 
@@ -305,6 +329,10 @@ impl Awgn {
     }
 
     #[cfg(feature = "num-complex")]
+    /// Generate X ~ CN(0, 2) distributed samples using the Ziggurat Algorithm.
+    ///
+    /// The Ziggurat Algorithm to generate complex gaussian distributed samples is around 2 times
+    /// faster than the Box-Muller transform.
     pub fn crandn_f64(&mut self) -> Complex<f64> {
         Complex::new(self.randn_f64(), self.randn_f64())
     }
@@ -319,9 +347,9 @@ mod tests {
     fn randn_timing() {
         let n = 1024 * 1024 * 64;
         //let mut data = vec![0.0_f32; n];
-        let mut awgn = Awgn::new(0, 512);
+        let mut rng = Generator::new(0, 512);
         let t0 = Instant::now();
-        let data: Vec<f64> = (0..n).map(|_| awgn.randn_f64()).collect();
+        let data: Vec<f64> = (0..n).map(|_| rng.randn_f64()).collect();
         let dt = t0.elapsed().as_secs_f64();
         println!("data[0]: {}", data[0]);
         println!("dt     : {}", dt);
@@ -333,13 +361,9 @@ mod tests {
     #[test]
     fn box_muller_timing() {
         let n = 1024 * 1024 * 64;
-        //let mut data = vec![0.0_f32; n];
-        let mut awgn = Awgn::new(0, 512);
+        let mut rng = Generator::new(0, 512);
         let t0 = Instant::now();
-        //let data: Vec<_> = (0..n).map(|_| awgn.rand_f32()).collect();
-        let data: Vec<_> = (0..n).map(|_| awgn.crandn_box_muller_f64()).collect();
-        //let data: Vec<_> = awgn.rand_vec_f32(n);
-        //awgn.fill_f32(&mut data);
+        let data: Vec<_> = (0..n).map(|_| rng.crandn_box_muller_f64()).collect();
         let dt = t0.elapsed().as_secs_f64();
         println!("data[0]: {}", data[0]);
         println!("dt     : {}", dt);
@@ -367,13 +391,9 @@ mod tests {
     #[test]
     fn ziggurat_timing() {
         let n = 1024 * 1024 * 64;
-        //let mut data = vec![0.0_f32; n];
-        let mut awgn = Awgn::new(0, 512);
+        let mut rng = Generator::new(0, 512);
         let t0 = Instant::now();
-        //let data: Vec<_> = (0..n).map(|_| awgn.rand_f32()).collect();
-        let data: Vec<_> = (0..n).map(|_| awgn.crandn_f64()).collect();
-        //let data: Vec<_> = awgn.rand_vec_f32(n);
-        //awgn.fill_f32(&mut data);
+        let data: Vec<_> = (0..n).map(|_| rng.crandn_f64()).collect();
         let dt = t0.elapsed().as_secs_f64();
         println!("data[0]: {}", data[0]);
         println!("dt     : {}", dt);
